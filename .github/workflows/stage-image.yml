@@ -1,0 +1,55 @@
+name: stage-image
+
+# Baut das OmniRoute-Stage-Entwicklungsimage als Artifact, damit der
+# 12-GiB-Produktionshost den RAM-Peak von `next build` nie sieht.
+# Der Workflow liegt auf einem eigenen CI-Branch; gebaut wird der Baum
+# des gepinnten Source-Branches (env.SOURCE_REF), nicht der CI-Branch.
+
+on:
+  push:
+    branches: [ci/stage-image]
+  workflow_dispatch:
+
+env:
+  SOURCE_REF: stage/antigravity-search
+  EXPECTED_COMMIT: 18bbb101980c639cfabdc5663213836d917c3269
+  IMAGE_TAG: 3.8.51-dev-18bbb1019
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 1
+
+      - name: Verify pinned commit
+        run: |
+          HEAD="$(git rev-parse HEAD)"
+          echo "head=$HEAD"
+          [ "$HEAD" = "$EXPECTED_COMMIT" ] || { echo "::error::source_ref is at $HEAD, expected $EXPECTED_COMMIT" >&2; exit 1; }
+
+      - name: Build image (upstream Docker defaults)
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision="$(git rev-parse HEAD)" \
+            --label org.opencontainers.image.source="https://github.com/sprintberlin/OmniRoute" \
+            --label net.sprintcx.omniroute.build=stage-dev \
+            --tag "sprintcx/omniroute:$IMAGE_TAG" \
+            .
+
+      - name: Export image artifact
+        run: docker save "sprintcx/omniroute:$IMAGE_TAG" | gzip -1 > stage-image.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omniroute-stage-image
+          path: stage-image.tar.gz
+          retention-days: 7
+          compression-level: 0
