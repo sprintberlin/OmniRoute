@@ -1,0 +1,68 @@
+name: stage-image
+
+# Baut das OmniRoute-Stage-Entwicklungsimage als Artifact auf einem
+# GitHub-hosted Runner, damit der 12-GiB-Produktionshost den RAM-Peak
+# des Webpack-Builds (~8-9 GiB RSS+Swap) nie sehen muss.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch oder Tag im Fork, dessen Quellbaum gebaut wird"
+        required: true
+        default: "stage/antigravity-search"
+      expected_commit:
+        description: "Exakter erwarteter Commit (SHA-40); verhindert silent drift"
+        required: true
+        default: "18bbb101980c639cfabdc5663213836d917c3269"
+      image_tag:
+        description: "Lokales Tag fuer das erzeugte Docker-Image"
+        required: true
+        default: "3.8.51-dev-18bbb1019"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          repository: sprintberlin/OmniRoute
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+
+      - name: Verify pinned commit
+        run: |
+          HEAD="$(git rev-parse HEAD)"
+          echo "Checked out HEAD: $HEAD"
+          if [ "$HEAD" != "${{ inputs.expected_commit }}" ]; then
+            echo "::error::source_ref HEAD ($HEAD) differs from expected_commit (${{ inputs.expected_commit }})" >&2
+            exit 1
+          fi
+
+      - name: Build image (upstream Docker defaults)
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision="${{ inputs.expected_commit }}" \
+            --label org.opencontainers.image.source="https://github.com/sprintberlin/OmniRoute" \
+            --label net.sprintcx.omniroute.build=stage-dev \
+            --tag "sprintcx/omniroute:${{ inputs.image_tag }}" \
+            .
+
+      - name: Export and compress image
+        run: |
+          mkdir -p build-out
+          docker save "sprintcx/omniroute:${{ inputs.image_tag }}" | gzip -1 > build-out/stage-image.tar.gz
+          sha256sum build-out/stage-image.tar.gz > build-out/stage-image.tar.gz.sha256
+          cat build-out/stage-image.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omniroute-stage-image
+          path: build-out/
+          retention-days: 7
+          compression-level: 0
