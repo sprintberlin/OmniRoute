@@ -34,29 +34,53 @@ jobs:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 1
 
-      - name: Verify pinned commit
+      - name: Verify pinned commit and inputs
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::expected_commit must be a lowercase SHA-40"; exit 1; }
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "::error::image_tag contains unsafe characters"; exit 1; }
           HEAD="$(git rev-parse HEAD)"
           echo "Checked out HEAD: $HEAD"
-          if [ "$HEAD" != "${{ inputs.expected_commit }}" ]; then
-            echo "::error::source_ref HEAD ($HEAD) differs from expected_commit (${{ inputs.expected_commit }})" >&2
+          if [ "$HEAD" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::source_ref HEAD ($HEAD) differs from expected_commit ($EXPECTED_COMMIT)" >&2
             exit 1
           fi
 
       - name: Build image (upstream Docker defaults)
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
+          set -euo pipefail
           docker build \
-            --label org.opencontainers.image.revision="${{ inputs.expected_commit }}" \
+            --label org.opencontainers.image.revision="$EXPECTED_COMMIT" \
             --label org.opencontainers.image.source="https://github.com/sprintberlin/OmniRoute" \
             --label net.sprintcx.omniroute.build=stage-dev \
-            --tag "sprintcx/omniroute:${{ inputs.image_tag }}" \
+            --tag "sprintcx/omniroute:$IMAGE_TAG" \
             .
 
-      - name: Export and compress image
+      - name: Export and checksum image
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
+          set -euo pipefail
           mkdir -p build-out
-          docker save "sprintcx/omniroute:${{ inputs.image_tag }}" | gzip -1 > build-out/stage-image.tar.gz
-          sha256sum build-out/stage-image.tar.gz > build-out/stage-image.tar.gz.sha256
+          docker save "sprintcx/omniroute:$IMAGE_TAG" | gzip -1 > build-out/stage-image.tar.gz
+          (
+            cd build-out
+            sha256sum stage-image.tar.gz > stage-image.tar.gz.sha256
+            jq -n \
+              --arg source_ref "$SOURCE_REF" \
+              --arg expected_commit "$EXPECTED_COMMIT" \
+              --arg image_tag "$IMAGE_TAG" \
+              '{source_ref:$source_ref,expected_commit:$expected_commit,image_tag:$image_tag}' \
+              > stage-image.json
+          )
           cat build-out/stage-image.tar.gz.sha256
 
       - name: Upload artifact
