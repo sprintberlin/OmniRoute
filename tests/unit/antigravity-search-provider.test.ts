@@ -288,19 +288,31 @@ test("tryAntigravitySearchProvider retries once without x-goog-user-project on 4
 test("tryAntigravitySearchProvider does not retry a 403 when the header was absent", async () => {
   const cfg = getSearchProvider("antigravity-search")!;
   let call = 0;
+  let sawHeader = true;
   const result = await tryAntigravitySearchProvider({
     config: cfg,
-    params: { query: "node release", maxResults: 3, providerOptions: { projectId: "proj" } },
-    credentials: {},
+    params: { query: "node release", maxResults: 3 },
+    credentials: {
+      provider: "agy",
+      accessToken: "live-token",
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      // Placeholder project: buildAntigravitySearchRequest accepts it, but
+      // applyAntigravityClientProfileHeaders drops x-goog-user-project for it,
+      // so the dispatch carries no project header to retry without.
+      projectId: "test-project",
+    },
     resolveSearchProxy: async () => ({ proxy: null, proxyLevel: "direct" }),
-    executeProviderFetch: async () => {
+    executeProviderFetch: async (params) => {
       call += 1;
+      sawHeader = Boolean((params.init.headers as Record<string, string>)["x-goog-user-project"]);
       return { success: false, status: 403, error: "403" };
     },
     normalizeResponse: () => ({ results: [], totalResults: 0 }),
   });
-  assert.equal(call, 1);
+  assert.equal(call, 1, "a header-less 403 must not trigger a second dispatch");
+  assert.equal(sawHeader, false, "precondition: the header really was absent");
   assert.equal((result as { success: boolean }).success, false);
+  assert.equal((result as { status: number }).status, 403);
 });
 
 test("tryAntigravitySearchProvider fails closed when no Antigravity connection exists", async () => {
