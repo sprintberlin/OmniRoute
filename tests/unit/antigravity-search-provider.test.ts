@@ -201,6 +201,7 @@ test("tryAntigravitySearchProvider dispatches the refreshed bearer through the s
         refreshToken: "refresh-token",
         expiresAt: new Date(Date.now() - 1000).toISOString(),
         connectionId: "conn-1",
+        projectId: "conn-gcp-project",
       },
       connectionId: "conn-1",
       resolveSearchProxy: async () => ({ proxy: null, proxyLevel: "direct" }),
@@ -216,6 +217,43 @@ test("tryAntigravitySearchProvider dispatches the refreshed bearer through the s
   );
   assert.equal((result as { success: boolean }).success, true);
   assert.equal(capturedAuth, "Bearer rotated-token");
+});
+
+test("buildAntigravitySearchRequest fails closed without any stored project id", () => {
+  const cfg = getSearchProvider("antigravity-search")!;
+  assert.throws(
+    () =>
+      buildAntigravitySearchRequest(cfg, {
+        query: "node release",
+        maxResults: 3,
+        token: "ya29.t",
+      }),
+    /GCP_PROJECT_REQUIRED/
+  );
+});
+
+test("tryAntigravitySearchProvider prefers the connection-level projectId over fallbacks", async () => {
+  const cfg = getSearchProvider("antigravity-search")!;
+  let capturedProject = "";
+  const result = await tryAntigravitySearchProvider({
+    config: cfg,
+    params: { query: "node release", maxResults: 3 },
+    credentials: {
+      provider: "antigravity",
+      accessToken: "live-token",
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      projectId: "top-level-project",
+      providerSpecificData: { projectId: "psd-project" },
+    },
+    resolveSearchProxy: async () => ({ proxy: null, proxyLevel: "direct" }),
+    executeProviderFetch: async (params) => {
+      capturedProject = String(JSON.parse(String(params.init.body)).project);
+      return { success: true, data: { results: [] } };
+    },
+    normalizeResponse: () => ({ results: [], totalResults: 0 }),
+  });
+  assert.equal((result as { success: boolean }).success, true);
+  assert.equal(capturedProject, "top-level-project");
 });
 
 test("tryAntigravitySearchProvider fails closed when no Antigravity connection exists", async () => {

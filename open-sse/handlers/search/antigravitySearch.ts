@@ -34,6 +34,7 @@ export interface AntigravitySearchParams {
   query: string;
   maxResults: number;
   token?: string;
+  projectId?: string;
   providerOptions?: Record<string, unknown>;
   providerSpecificData?: Record<string, unknown>;
 }
@@ -182,12 +183,21 @@ export function buildAntigravitySearchRequest(
     (typeof params.providerOptions?.model === "string" && params.providerOptions.model.trim()) ||
     DEFAULT_ANTIGRAVITY_SEARCH_MODEL;
 
-  const projectId =
+  const rawProjectId =
+    (typeof params.projectId === "string" && params.projectId.trim()) ||
     (typeof params.providerSpecificData?.projectId === "string" &&
       params.providerSpecificData.projectId.trim()) ||
     (typeof params.providerOptions?.projectId === "string" &&
       params.providerOptions.projectId.trim()) ||
-    "aicode-consumers";
+    "";
+
+  if (!rawProjectId) {
+    throw new Error(
+      "GCP_PROJECT_REQUIRED: Missing Google Cloud project for Antigravity connection. " +
+        "Ensure the Antigravity OAuth connection has completed setup or configure a Project ID."
+    );
+  }
+  const projectId = rawProjectId;
 
   const clientProfile = getAntigravityClientProfile({
     providerSpecificData: params.providerSpecificData,
@@ -329,6 +339,13 @@ export async function refreshAntigravitySearchToken(
   }
 
   if (typeof refreshed?.accessToken === "string" && refreshed.accessToken) {
+    if (refreshed.accessToken === token && nearExpiry) {
+      return {
+        ok: false,
+        error:
+          "Antigravity OAuth refresh token is revoked or expired. Reconnect the Antigravity provider connection.",
+      };
+    }
     return { ok: true, credentials: { ...credentials, ...refreshed } };
   }
   return {
@@ -345,17 +362,47 @@ export async function refreshAntigravitySearchToken(
  * delegates to the shared search fetch chokepoint so proxy resolution, call
  * logs, and connection cooldowns behave exactly like every other provider.
  */
+function recordSearchFailure(
+  config: SearchProviderConfig,
+  query: string,
+  connectionId: string | undefined,
+  status: number,
+  error: string,
+  startTime: number
+): void {
+  void import("@/lib/usageDb")
+    .then(({ saveCallLog }) =>
+      saveCallLog({
+        method: config.method,
+        path: "/v1/search",
+        model: config.id,
+        provider: config.id,
+        connectionId: connectionId || null,
+        requestType: "search",
+        requestBody: { query: query.slice(0, 200), search_type: "web" },
+        status,
+        duration: Date.now() - startTime,
+        error: error.slice(0, 500),
+      })
+    )
+    .catch(() => undefined);
+}
+
 export async function tryAntigravitySearchProvider(
   args: TryAntigravitySearchParams,
   deps: AntigravityTokenRefreshDeps = {}
 ): Promise<ProviderFetchResult> {
   const { config, credentials, log, connectionId, apiKeyId } = args;
   const startTime = Date.now();
+  const fail = (status: number, error: string): ProviderFetchResult => {
+    recordSearchFailure(config, args.params.query, connectionId, status, error, startTime);
+    return { success: false, status, error };
+  };
 
   const refreshed = await refreshAntigravitySearchToken(credentials, deps);
   if (!refreshed.ok) {
     const failure = refreshed as { ok: false; error: string };
-    return { success: false, status: 401, error: failure.error };
+    return fail(401, failure.error);
   }
   const activeCredentials = refreshed.credentials;
   const providerSpecificData =
@@ -363,29 +410,29 @@ export async function tryAntigravitySearchProvider(
     typeof activeCredentials.providerSpecificData === "object"
       ? (activeCredentials.providerSpecificData as Record<string, unknown>)
       : undefined;
+  const topLevelProjectId =
+    typeof activeCredentials.projectId === "string" && activeCredentials.projectId.trim()
+      ? activeCredentials.projectId.trim()
+      : undefined;
   const params: AntigravitySearchParams = {
     ...args.params,
     token: activeCredentials.accessToken as string | undefined,
+    projectId: topLevelProjectId || args.params.projectId,
     providerSpecificData,
   };
 
   if (!params.token) {
-    return {
-      success: false,
-      status: 401,
-      error: "No active Antigravity OAuth connection available for antigravity-search.",
-    };
+    return fail(401, "No active Antigravity OAuth connection available for antigravity-search.");
   }
 
   let built: { url: string; init: RequestInit };
   try {
     built = buildAntigravitySearchRequest(config, params);
   } catch (err) {
-    return {
-      success: false,
-      status: 400,
-      error: err instanceof Error ? err.message : "Invalid Antigravity search configuration",
-    };
+    return fail(
+      400,
+      err instanceof Error ? err.message : "Invalid Antigravity search configuration"
+    );
   }
 
   const { proxy, proxyLevel } = await args.resolveSearchProxy(connectionId, apiKeyId, config.id);
