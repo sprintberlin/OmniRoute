@@ -36,6 +36,7 @@ import { buildJinaSearchRequest, extractJinaSearchItems } from "./search/jinaSea
 import * as xSearch from "./search/xSearch.ts";
 import * as xquikSearch from "./search/xquikSearch.ts";
 import * as anysearchSearch from "./search/anysearchSearch.ts";
+import * as antigravitySearch from "./search/antigravitySearch.ts";
 import { freeWebSearch } from "../services/freeWebSearch.ts";
 import { saveCallLog } from "@/lib/usageDb";
 import { safeOutboundFetch } from "@/shared/network/safeOutboundFetch";
@@ -737,6 +738,7 @@ const requestBuilders: Record<string, SearchRequestBuilder> = {
   "x-search": xSearch.buildXSearchRequest,
   "xquik-search": xquikSearch.buildXquikSearchRequest,
   "anysearch-search": anysearchSearch.buildAnysearchSearchRequest,
+  "antigravity-search": antigravitySearch.buildAntigravitySearchRequest,
 };
 
 function buildRequest(
@@ -1357,6 +1359,8 @@ const responseNormalizers: Record<string, SearchResponseNormalizer> = {
   "x-search": normalizeXSearchResponse,
   "xquik-search": (data) => xquikSearch.normalizeXquikSearchResponse(data, makeResult),
   "anysearch-search": (data) => anysearchSearch.normalizeAnysearchSearchResponse(data, makeResult),
+  "antigravity-search": (data, query) =>
+    antigravitySearch.normalizeAntigravitySearchResponse(data, query, "web", makeResult),
 };
 
 function normalizeResponse(
@@ -1712,6 +1716,19 @@ async function tryProvider(
     return tryDuckDuckGoFreeProvider(config, params, startTime, globalStartTime, log);
   }
 
+  if (config.id === antigravitySearch.ANTIGRAVITY_SEARCH_PROVIDER_ID) {
+    return antigravitySearch.tryAntigravitySearchProvider({
+      config,
+      params: { ...params, token, providerSpecificData },
+      credentials,
+      log,
+      connectionId,
+      apiKeyId,
+      resolveSearchProxy,
+      executeProviderFetch,
+      normalizeResponse,
+    });
+  }
   if (config.id === "zai-search" && token) {
     return tryZaiMCPProvider(
       config,

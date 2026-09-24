@@ -253,7 +253,12 @@ export async function executeProviderFetch(
       };
     }
 
-    const data = await response.json();
+    // #14654: Antigravity's Cloud Code endpoint answers SSE (text/event-stream)
+    // even for one-shot search calls; parse per content-type so the normalizer
+    // receives the raw SSE text instead of a JSON() SyntaxError.
+    const contentType = response.headers.get("content-type") || "";
+    const isEventStream = contentType.includes("text/event-stream") || url.includes("alt=sse");
+    const data: unknown = isEventStream ? await response.text() : await response.json();
     const normalized = normalize(config.id, data, query, searchType);
     const results = normalized.results.slice(0, maxResults);
     const duration = Date.now() - startTime;

@@ -1,0 +1,1 @@
+- **feat(providers):** add `antigravity-search` provider reusing existing Antigravity/agy OAuth connections with Google Search grounding ([#14654](https://github.com/diegosouzapw/OmniRoute/issues/14654))

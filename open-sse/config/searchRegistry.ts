@@ -17,7 +17,7 @@ export interface SearchProviderConfig {
   name: string;
   baseUrl: string;
   method: "GET" | "POST";
-  authType: "apikey" | "none";
+  authType: "apikey" | "oauth" | "none";
   authHeader: string;
   costPerQuery: number;
   freeMonthlyQuota: number;
@@ -32,6 +32,11 @@ export interface SearchProviderConfig {
    * credentialed provider is available, or when requested explicitly by id.
    */
   fallbackOnly?: boolean;
+  /**
+   * Provider is available only when requested by id. Unlike fallbackOnly, it is
+   * never promoted as a last-resort primary or failover candidate.
+   */
+  explicitOnly?: boolean;
   disabled?: boolean;
   /**
    * May a CALLER-supplied `provider_options.baseUrl` redirect this provider?
@@ -406,6 +411,28 @@ export const SEARCH_PROVIDERS: Record<string, SearchProviderConfig> = {
     cacheTTLMs: 5 * 60 * 1000,
     fallbackOnly: true,
   },
+
+  // Antigravity Google Search grounding via an existing antigravity/agy OAuth
+  // connection (#14654). Explicit provider id only — never auto-selected (the
+  // quota/ToS risk of spending Antigravity chat quota through a non-chat path
+  // means it must be requested by name).
+  "antigravity-search": {
+    id: "antigravity-search",
+    name: "Antigravity Search (Gemini grounding)",
+    baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+    method: "POST",
+    authType: "oauth", // credentials resolve via the antigravity/agy fallback chain
+    authHeader: "bearer",
+    costPerQuery: 0,
+    freeMonthlyQuota: 0,
+    searchTypes: ["web"],
+    defaultMaxResults: 5,
+    maxMaxResults: 20,
+    timeoutMs: 60_000,
+    cacheTTLMs: 5 * 60 * 1000,
+    fallbackOnly: true,
+    explicitOnly: true,
+  },
 };
 
 /**
@@ -418,6 +445,7 @@ export const SEARCH_CREDENTIAL_FALLBACKS: Record<string, string | string[]> = {
   "zai-search": "zai",
   "jina-search": "jina-ai",
   "x-search": ["xai-oauth", "xao", "xai"],
+  "antigravity-search": ["antigravity", "agy"],
 };
 
 export function getSearchCredentialFallbacks(providerId: string): string[] {
@@ -457,6 +485,8 @@ export const SEARCH_PROVIDER_ALIASES: Record<string, string> = {
   xquik_search: "xquik-search",
   anysearch: "anysearch-search",
   anysearch_search: "anysearch-search",
+  "antigravity-grounding": "antigravity-search",
+  agy_search: "antigravity-search",
 };
 
 export function resolveSearchProviderId(providerId: string): string {
@@ -544,7 +574,10 @@ export function selectProvider(
   // (`web`) so X-only providers are never cheapest-wins for generic queries.
   const effectiveType = searchType || "web";
   const providers = Object.values(SEARCH_PROVIDERS).filter(
-    (provider) => !provider.fallbackOnly && supportsSearchType(provider, effectiveType)
+    (provider) =>
+      !provider.fallbackOnly &&
+      !provider.explicitOnly &&
+      supportsSearchType(provider, effectiveType)
   );
   if (providers.length === 0) return null;
 

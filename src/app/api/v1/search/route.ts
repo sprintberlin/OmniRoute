@@ -101,6 +101,11 @@ async function resolveSearchExecutionCredentials(providerConfig: {
 }): Promise<SearchCredentialLookup> {
   const credentials = await resolveSearchCredentials(providerConfig.id);
   if (credentials) return credentials;
+  // #14654: antigravity-search rides on an existing antigravity/agy OAuth
+  // connection resolved via SEARCH_CREDENTIAL_FALLBACKS — an empty credential
+  // object would dispatch an unauthenticated request to Google. Never default
+  // to {} here; report the named-provider error instead.
+  if (providerConfig.id === "antigravity-search") return null;
   return providerConfig.authType === "none" ? {} : null;
 }
 
@@ -174,6 +179,7 @@ async function postHandler(request: Request, context: unknown) {
       .filter(
         (p) =>
           !p.fallbackOnly &&
+          !p.explicitOnly &&
           supportsSearchType(p, body.search_type) &&
           !isProviderBlockedByIdOrAlias(p.id, blockedProviders)
       )
@@ -205,7 +211,9 @@ async function postHandler(request: Request, context: unknown) {
     if (!credentials) {
       return errorResponse(
         HTTP_STATUS.BAD_REQUEST,
-        `No credentials configured for search provider: ${providerConfig.id}. Add an API key for "${providerConfig.id}" in the dashboard.`
+        providerConfig.id === "antigravity-search"
+          ? "No active Antigravity OAuth connection is available for antigravity-search. Add or reconnect an Antigravity (agy) provider connection in the dashboard."
+          : `No credentials configured for search provider: ${providerConfig.id}. Add an API key for "${providerConfig.id}" in the dashboard.`
       );
     }
   } else {
@@ -227,6 +235,7 @@ async function postHandler(request: Request, context: unknown) {
         .filter(
           (provider) =>
             !provider.fallbackOnly &&
+            !provider.explicitOnly &&
             supportsSearchType(provider, body.search_type) &&
             !isProviderBlockedByIdOrAlias(provider.id, blockedProviders)
         )
@@ -257,6 +266,7 @@ async function postHandler(request: Request, context: unknown) {
         .filter(
           (provider) =>
             provider.fallbackOnly &&
+            !provider.explicitOnly &&
             supportsSearchType(provider, body.search_type) &&
             !isProviderBlockedByIdOrAlias(provider.id, blockedProviders)
         )
@@ -294,7 +304,10 @@ async function postHandler(request: Request, context: unknown) {
     // Exclude fallback-only providers; they are only used by the last-resort step.
     const otherIds = Object.values(SEARCH_PROVIDERS)
       .filter(
-        (provider) => !provider.fallbackOnly && supportsSearchType(provider, body.search_type)
+        (provider) =>
+          !provider.fallbackOnly &&
+          !provider.explicitOnly &&
+          supportsSearchType(provider, body.search_type)
       )
       .sort((a, b) => a.costPerQuery - b.costPerQuery)
       .map((p) => p.id)
@@ -316,7 +329,8 @@ async function postHandler(request: Request, context: unknown) {
     // is configured. Only used when no real alternate was found above.
     if (!alternateProviderId) {
       for (const provider of Object.values(SEARCH_PROVIDERS)) {
-        if (!provider.fallbackOnly || provider.id === providerConfig.id) continue;
+        if (provider.explicitOnly || !provider.fallbackOnly || provider.id === providerConfig.id)
+          continue;
         if (isUnconfiguredLoopbackSearchProvider(provider)) continue;
         if (!supportsSearchType(provider, body.search_type)) continue;
         const fallbackCreds = await resolveSearchExecutionCredentials(provider);

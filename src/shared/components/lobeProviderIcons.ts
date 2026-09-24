@@ -470,6 +470,7 @@ const LOBE_PROVIDER_ALIASES = {
   "xai-oauth": "XAI",
   xao: "XAI",
   "x-search": "XAI",
+  "antigravity-search": "Gemini",
   "xiaomi-mimo": "XiaomiMiMo",
   xiaomimimo: "XiaomiMiMo",
   xinference: "Xinference",

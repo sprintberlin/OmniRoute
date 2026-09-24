@@ -179,12 +179,13 @@ export async function executeWebSearch(
       };
     }
     if (!credentials) {
-      throw new WebSearchExecutionError(
-        providerConfig.authType === "none"
-          ? `Search provider ${providerConfig.id} is not configured. Set its base URL in the dashboard or pass provider_options.baseUrl.`
-          : `No credentials configured for search provider: ${providerConfig.id}. Add an API key for "${providerConfig.id}" in the dashboard.`,
-        400
-      );
+      const message =
+        providerConfig.id === "antigravity-search"
+          ? "No active Antigravity OAuth connection is available for antigravity-search. Add or reconnect an Antigravity (agy) provider connection in the dashboard."
+          : providerConfig.authType === "none"
+            ? `Search provider ${providerConfig.id} is not configured. Set its base URL in the dashboard or pass provider_options.baseUrl.`
+            : `No credentials configured for search provider: ${providerConfig.id}. Add an API key for "${providerConfig.id}" in the dashboard.`;
+      throw new WebSearchExecutionError(message, 400);
     }
   } else {
     // Auto-select: prefer the cheapest non-fallback provider that actually has
@@ -192,7 +193,12 @@ export async function executeWebSearch(
     // configured paid provider is never skipped just because a cheaper
     // no-credentials provider appears first in the cost sort (issue #11524).
     const candidateProviders = Object.values(SEARCH_PROVIDERS)
-      .filter((provider) => !provider.fallbackOnly && supportsSearchType(provider, searchType))
+      .filter(
+        (provider) =>
+          !provider.fallbackOnly &&
+          !provider.explicitOnly &&
+          supportsSearchType(provider, searchType)
+      )
       .sort((a, b) => a.costPerQuery - b.costPerQuery);
 
     for (const candidate of candidateProviders) {
@@ -208,7 +214,12 @@ export async function executeWebSearch(
       // Last resort: fallback-only providers so out-of-the-box search
       // still works when no credentialed provider is configured.
       const fallbackProviders = Object.values(SEARCH_PROVIDERS)
-        .filter((provider) => provider.fallbackOnly && supportsSearchType(provider, searchType))
+        .filter(
+          (provider) =>
+            provider.fallbackOnly &&
+            !provider.explicitOnly &&
+            supportsSearchType(provider, searchType)
+        )
         .sort((a, b) => a.costPerQuery - b.costPerQuery);
 
       for (const fallbackProvider of fallbackProviders) {
@@ -237,7 +248,12 @@ export async function executeWebSearch(
     // Exclude fallback-only providers from execution-time alternates.
     // They are reserved for last-resort primary selection.
     const otherIds = Object.values(SEARCH_PROVIDERS)
-      .filter((provider) => !provider.fallbackOnly && supportsSearchType(provider, searchType))
+      .filter(
+        (provider) =>
+          !provider.fallbackOnly &&
+          !provider.explicitOnly &&
+          supportsSearchType(provider, searchType)
+      )
       .sort((a, b) => a.costPerQuery - b.costPerQuery)
       .map((provider) => provider.id)
       .filter((providerId) => providerId !== providerConfig!.id);

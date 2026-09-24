@@ -195,6 +195,19 @@ export const SEARCH_PROVIDERS = {
     website: "https://ollama.com/settings/keys",
     authHint: "Same API key as Ollama Cloud (from ollama.com/settings/keys)",
   },
+  "antigravity-search": {
+    id: "antigravity-search",
+    serviceKinds: ["webSearch"],
+    alias: "antigravity-grounding",
+    name: "Antigravity Search (Gemini grounding)",
+    icon: "rocket_launch",
+    color: "#F59E0B",
+    textIcon: "AG",
+    website: "https://github.com/diegosouzapw/OmniRoute/issues/14654",
+    hasFree: true,
+    authHint:
+      "Reuses an existing Antigravity (agy) OAuth connection. Explicit provider id only — never auto-selected; Google Search grounding consumes Antigravity plan quota.",
+  },
   context7: {
     id: "context7",
     alias: "context7",
