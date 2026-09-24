@@ -442,20 +442,45 @@ export async function tryAntigravitySearchProvider(
 
   log?.info?.("SEARCH", `${config.id} | query: "${params.query.slice(0, 80)}"`);
 
-  return args.executeProviderFetch({
-    config,
-    url: built.url,
-    init: built.init,
-    controller,
-    timer,
-    query: params.query,
-    searchType: "web",
-    maxResults: params.maxResults,
-    startTime,
-    connectionId,
-    proxy,
-    proxyLevel,
-    log: log ?? undefined,
-    normalize: args.normalizeResponse,
-  });
+  const dispatch = (init: RequestInit, ctrl: AbortController, tmr: ReturnType<typeof setTimeout>) =>
+    args.executeProviderFetch({
+      config,
+      url: built.url,
+      init,
+      controller: ctrl,
+      timer: tmr,
+      query: params.query,
+      searchType: "web",
+      maxResults: params.maxResults,
+      startTime,
+      connectionId,
+      proxy,
+      proxyLevel,
+      log: log ?? undefined,
+      normalize: args.normalizeResponse,
+    });
+
+  const result = await dispatch(built.init, controller, timer);
+
+  // Mirror the native executor's x-goog-user-project 403 fallback
+  // (executeAttempt.ts): some Cloud Code callers may use the connection's
+  // project in the envelope but lack serviceusage permission on the header —
+  // retry once without the header instead of failing the search.
+  const headers = built.init.headers as Record<string, string>;
+  if (
+    !result.success &&
+    result.status === 403 &&
+    headers &&
+    typeof headers === "object" &&
+    headers["x-goog-user-project"]
+  ) {
+    const retryHeaders = { ...headers };
+    delete retryHeaders["x-goog-user-project"];
+    const retryController = new AbortController();
+    const retryTimer = setTimeout(() => retryController.abort(), timeout);
+    log?.info?.("SEARCH", `${config.id} | 403 with x-goog-user-project, retrying without it`);
+    return dispatch({ ...built.init, headers: retryHeaders }, retryController, retryTimer);
+  }
+
+  return result;
 }

@@ -256,6 +256,53 @@ test("tryAntigravitySearchProvider prefers the connection-level projectId over f
   assert.equal(capturedProject, "top-level-project");
 });
 
+test("tryAntigravitySearchProvider retries once without x-goog-user-project on 403", async () => {
+  const cfg = getSearchProvider("antigravity-search")!;
+  const seenHeaders: Array<Record<string, string>> = [];
+  let call = 0;
+  const result = await tryAntigravitySearchProvider({
+    config: cfg,
+    params: { query: "node release", maxResults: 3 },
+    credentials: {
+      provider: "agy",
+      accessToken: "live-token",
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      projectId: "aicode-consumers",
+    },
+    resolveSearchProxy: async () => ({ proxy: null, proxyLevel: "direct" }),
+    executeProviderFetch: async (params) => {
+      call += 1;
+      seenHeaders.push(params.init.headers as Record<string, string>);
+      if (call === 1) return { success: false, status: 403, error: "403" };
+      return { success: true, data: { results: [] } };
+    },
+    normalizeResponse: () => ({ results: [], totalResults: 0 }),
+  });
+  assert.equal(call, 2, "must dispatch exactly one retry");
+  assert.ok(seenHeaders[0]["x-goog-user-project"], "first attempt carries the project header");
+  assert.equal(seenHeaders[1]["x-goog-user-project"], undefined, "retry drops the header");
+  assert.ok(seenHeaders[1]["Authorization"], "retry keeps the bearer");
+  assert.equal((result as { success: boolean }).success, true);
+});
+
+test("tryAntigravitySearchProvider does not retry a 403 when the header was absent", async () => {
+  const cfg = getSearchProvider("antigravity-search")!;
+  let call = 0;
+  const result = await tryAntigravitySearchProvider({
+    config: cfg,
+    params: { query: "node release", maxResults: 3, providerOptions: { projectId: "proj" } },
+    credentials: {},
+    resolveSearchProxy: async () => ({ proxy: null, proxyLevel: "direct" }),
+    executeProviderFetch: async () => {
+      call += 1;
+      return { success: false, status: 403, error: "403" };
+    },
+    normalizeResponse: () => ({ results: [], totalResults: 0 }),
+  });
+  assert.equal(call, 1);
+  assert.equal((result as { success: boolean }).success, false);
+});
+
 test("tryAntigravitySearchProvider fails closed when no Antigravity connection exists", async () => {
   const config = getSearchProvider("antigravity-search")!;
   const result = await tryAntigravitySearchProvider({
